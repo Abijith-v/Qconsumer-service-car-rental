@@ -1,5 +1,6 @@
 package com.example.kafkaconsumer.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
 import lombok.Data;
 import lombok.experimental.Accessors;
@@ -12,6 +13,7 @@ import java.util.*;
 @Data
 @Accessors(chain = true)
 @Entity
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class Users implements UserDetails {
 
     @Id

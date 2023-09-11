@@ -9,6 +9,7 @@ import com.example.kafkaconsumer.repository.BookingSseEventRepository;
 import com.example.kafkaconsumer.repository.CarRepository;
 import com.example.kafkaconsumer.repository.UserRepository;
 import com.example.kafkaconsumer.request.BookCarRequest;
+import com.example.kafkaconsumer.request.PaymentConfirmationPayload;
 import jakarta.transaction.Transactional;
 import lombok.experimental.Accessors;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -41,7 +42,6 @@ public class BookingService {
     @Autowired
     private BookingSseEventsService bookingSseEventsService;
 
-    private final List<SseEmitter> emitters = new ArrayList<>();
 
     @Transactional
     public void bookCar(BookCarRequest bookingRequest) {
@@ -55,20 +55,18 @@ public class BookingService {
                             .setUser(user)
                             .setPickupDate(bookingRequest.getPickupDate())
                             .setDropOffDate(bookingRequest.getDropOffDate())
-                            .setAdditionalServices(bookingRequest.getAdditionalServices())
-                            .setStatus(bookingRequest.getStatus());
+                            .setAdditionalServices(bookingRequest.getAdditionalServices());
+//                            .setStatus(bookingRequest.getStatus());
                     // Save booking
                     CarBooking newBooking = bookingRepository.save(booking);
+                    PaymentConfirmationPayload newBookingPayload = new PaymentConfirmationPayload();
+                    newBookingPayload.setCarId(car.getId())
+                                    .setUserId(user.getUserId())
+                                    .setId(newBooking.getId());
                     // Set car as booked
                     car.setBooked(true);
                     carRepository.save(car);
-                    // Save SSE message in mongo that booking is done
-                    BookingSseEvent sseEvent = new BookingSseEvent();
-                    sseEvent.setUserId(newBooking.getUser().getUserId())
-                            .setCarId(newBooking.getCar().getId())
-                            .setBookingId(newBooking.getId());
-
-                    bookingSseEventRepository.save(sseEvent);
+                    saveSseEventAndSendMsg(newBookingPayload, "Payment pending");
                 } else {
                     System.out.println("Car not found!");
                 }
@@ -80,26 +78,45 @@ public class BookingService {
         }
     }
 
+    public void saveSseEventAndSendMsg(PaymentConfirmationPayload newBooking, String message) {
+        // Save SSE message in mongo that booking is done
+
+        BookingSseEvent sseEvent = bookingSseEventRepository.findByUserIdAndCarId(
+                newBooking.getUserId(),
+                newBooking.getCarId()
+        ).orElse(new BookingSseEvent());
+        sseEvent.setUserId(newBooking.getUserId())
+                .setCarId(newBooking.getCarId())
+                .setBookingId(newBooking.getId())
+                .setMessage(message);
+
+        System.out.println("Saving SSE " + message);
+        bookingSseEventRepository.save(sseEvent);
+    }
+
     private boolean isCarAvailableForBooking(Long carId) {
         CarBooking carBooking = bookingRepository.findByCarId(carId).orElse(null);
         return carBooking == null;
     }
 
-    public SseEmitter processSseRequest(Long userId, Long carId) {
+    public SseEmitter processSseRequest(Long userId, Long carId) throws Exception {
 
         SseEmitter emitter = new SseEmitter();
 
         // Schedule a task to periodically check for updates
         ScheduledExecutorService executor = Executors.newScheduledThreadPool(1);
         executor.scheduleAtFixedRate(() -> {
-            try {
-                BookingSseEvent sseEvent = bookingSseEventsService.getPendingSseEvents(userId, carId);
+            BookingSseEvent sseEvent = bookingSseEventsService.getPendingSseEvents(userId, carId);
+            if (sseEvent != null) {
                 this.sendSseMessageToClients(sseEvent, emitter);
-            } catch (Exception e) {
-                System.out.println(e.getMessage());
+            } else {
+                try {
+                    throw new Exception("No events for this user and car at the moment");
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
             }
         }, 0, 5, TimeUnit.SECONDS); // Check for updates every 5 seconds
-
         // Complete the emitter
         emitter.onCompletion(() -> {
             executor.shutdown();
@@ -111,13 +128,16 @@ public class BookingService {
 
     // Method to send SSE messages
     public void sendSseMessageToClients(BookingSseEvent sseEvent, SseEmitter emitter) {
+
         try {
             if (sseEvent != null) {
                 // Send SSE event with a "message" field
-                emitter.send(SseEmitter.event().data("Booking confirmed - Booking ID : " + sseEvent.getBookingId()));
-                emitter.complete();
+                emitter.send(SseEmitter.event().data(sseEvent.getMessage() + ", Unique ID : " + sseEvent.getBookingId()));
+                if (sseEvent.getMessage().endsWith("confirmed")) {
+                    emitter.complete();
+                }
             } else {
-                emitter.send(SseEmitter.event().data("Booking not confirmed"));
+                emitter.send(SseEmitter.event().data("No booking requests"));
             }
         } catch (IOException e) {
             // Handle exceptions (e.g., client disconnected)

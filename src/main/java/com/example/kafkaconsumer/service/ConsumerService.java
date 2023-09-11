@@ -22,8 +22,6 @@ public class ConsumerService {
 
         try {
             BookCarRequest bookingRequest = objectMapper.readValue(bookingRequestJson, BookCarRequest.class);
-            System.out.println(bookingRequest.getUserEmail());
-
             bookingService.bookCar(bookingRequest);
         } catch (Exception e) {
             System.out.println(e.getMessage());

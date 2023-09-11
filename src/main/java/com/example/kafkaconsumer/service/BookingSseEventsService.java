@@ -15,6 +15,6 @@ public class BookingSseEventsService {
     private BookingSseEventRepository bookingSseEventRepository;
 
     public BookingSseEvent getPendingSseEvents(Long userId, Long carId) {
-        return bookingSseEventRepository.findByUserIdAndCarId(userId, carId);
+        return bookingSseEventRepository.findByUserIdAndCarId(userId, carId).orElse(null);
     }
 }

@@ -30,5 +30,5 @@ public class CarBooking {
     private Date dropOffDate;
 
     private String additionalServices;
-    private String status;
+//    private String status;
 }
